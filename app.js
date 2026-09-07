@@ -402,7 +402,7 @@ function bindStageEditors(root){
     }
     const stage=baseStages(inv).find(x=>x.id===id);
     saveState('Дата этапа изменена'); renderAll();
-    setStatus(stage?.stock?'Дата 40% изменена. Приход товара, план продаж и денежный поток пересчитаны.':'Дата платежа изменена. План продаж, денежный поток и более поздние расчёты счёта обновлены.','success');
+    setStatus(stage?.stock?(hasOwn(state.stockDateOverrides,inv.id)?'Дата 40% изменена. Ручная дата прихода сохранена; платежи, план продаж и денежный поток пересчитаны.':'Дата 40% изменена. Дата прихода следует за 40%; остатки, план продаж и денежный поток пересчитаны.'):'Дата платежа изменена. План продаж, денежный поток и более поздние расчёты счёта обновлены.','success');
   }));
   root.querySelectorAll('[data-reset-stage-date]').forEach(btn=>btn.addEventListener('click',()=>{
     const id=btn.dataset.resetStageDate, invoiceId=invoiceIdFromStageId(id), inv=state.invoices.find(x=>x.id===invoiceId);
