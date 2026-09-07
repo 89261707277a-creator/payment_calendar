@@ -12,7 +12,7 @@ const skuCatalog = [
   {article:'310803', label:'Графит / серый'}
 ];
 const defaultState = () => ({
-  version:4,
+  version:5,
   settings:{
     modelStart:'2026-09-10', horizonMonths:6, unitCost:1150, multiplier:2.5, startingCash:0,
     periodDays:7, payoutLagMonths:1, openingStockCorrection:0,
@@ -31,6 +31,7 @@ const defaultState = () => ({
     }
   ],
   paymentOverrides:{},
+  paymentDateOverrides:{},
   manualPayments:[],
   actualSales:{}
 });
@@ -57,8 +58,9 @@ const netPerUnit = () => Math.max(0,Number(state.settings.unitCost||0)*Number(st
 
 function normalizeState(raw){
   if(!raw || !raw.settings || !Array.isArray(raw.invoices)) return defaultState();
-  raw.version=4;
+  raw.version=5;
   raw.paymentOverrides ||= {};
+  raw.paymentDateOverrides ||= {};
   raw.manualPayments ||= [];
   raw.actualSales ||= {};
   raw.settings = {...defaultState().settings, ...raw.settings};
@@ -106,10 +108,23 @@ function writeSettings(){
 function baseStages(inv){
   const s=state.settings, d=parseDate(inv.date);
   return [
-    {kind:'stage',stage:'p1',stageIndex:0,pct:Number(s.p1Pct),date:d,label:`${fmtNumber(s.p1Pct)}% · дата счёта`,stock:false},
-    {kind:'stage',stage:'p2',stageIndex:1,pct:Number(s.p2Pct),date:addDays(d,s.p2Days),label:`${fmtNumber(s.p2Pct)}% · +${fmtInt(s.p2Days)} дней`,stock:false},
-    {kind:'stage',stage:'p3',stageIndex:2,pct:Number(s.p3Pct),date:addMonthsSafe(d,s.p3Months),label:`${fmtNumber(s.p3Pct)}% · +${fmtInt(s.p3Months)} мес.`,stock:true}
-  ].map(r=>({...r,id:`${inv.id}:${r.stage}`,invoiceId:inv.id,invoiceNumber:inv.number,invoiceDate:inv.date,auto:money2(Number(inv.total||0)*r.pct/100),qty:r.stock?totalInvoiceQty(inv):0}));
+    {kind:'stage',stage:'p1',stageIndex:0,pct:Number(s.p1Pct),autoDate:d,label:`${fmtNumber(s.p1Pct)}% · дата счёта`,stock:false},
+    {kind:'stage',stage:'p2',stageIndex:1,pct:Number(s.p2Pct),autoDate:addDays(d,s.p2Days),label:`${fmtNumber(s.p2Pct)}% · +${fmtInt(s.p2Days)} дней`,stock:false},
+    {kind:'stage',stage:'p3',stageIndex:2,pct:Number(s.p3Pct),autoDate:addMonthsSafe(d,s.p3Months),label:`${fmtNumber(s.p3Pct)}% · +${fmtInt(s.p3Months)} мес.`,stock:true}
+  ].map(r=>{
+    const id=`${inv.id}:${r.stage}`;
+    const dateManualOverride=hasOwn(state.paymentDateOverrides,id);
+    const date=dateManualOverride?parseDate(state.paymentDateOverrides[id]):new Date(r.autoDate);
+    return {...r,id,date,dateManualOverride,invoiceId:inv.id,invoiceNumber:inv.number,invoiceDate:inv.date,auto:money2(Number(inv.total||0)*r.pct/100),qty:r.stock?totalInvoiceQty(inv):0};
+  });
+}
+function stageSequenceIsValid(inv){
+  const stages=baseStages(inv).sort((a,b)=>a.stageIndex-b.stageIndex);
+  return stages.every((stage,i)=>i===0 || stages[i-1].date<=stage.date);
+}
+function invoiceIdFromStageId(stageId){
+  const pos=String(stageId).lastIndexOf(':');
+  return pos<0?'':String(stageId).slice(0,pos);
 }
 function linkedManualPayments(invoiceId){
   return state.manualPayments.filter(p=>p.invoiceId===invoiceId).map(p=>({
@@ -169,7 +184,7 @@ function allPayments(){
 function stockEvents(){
   return state.invoices.map(inv=>{
     const p3=baseStages(inv).find(x=>x.stage==='p3');
-    return {date:p3.date,invoiceId:inv.id,invoiceNumber:inv.number,invoiceDate:inv.date,qty:totalInvoiceQty(inv),items:{...inv.items}};
+    return {date:p3.date,autoDate:p3.autoDate,dateManualOverride:p3.dateManualOverride,invoiceId:inv.id,invoiceNumber:inv.number,invoiceDate:inv.date,qty:totalInvoiceQty(inv),items:{...inv.items}};
   }).sort((a,b)=>a.date-b.date);
 }
 function makePeriods(){
@@ -320,9 +335,10 @@ function balanceMarkup(balance){
   return `<span class="balance-over">переплата ${fmtMoney(Math.abs(balance))}</span>`;
 }
 function stageMilestone(inv,p){
-  const manual=p.manualOverride, recalc=p.recalculated;
-  const meta=manual?`ручная сумма · база ${fmtMoney(p.auto)}`:recalc?`пересчитано · база ${fmtMoney(p.auto)}`:`база ${fmtMoney(p.auto)}`;
-  return `<div class="milestone ${p.stock?'stock':''}"><b>${fmtNumber(p.pct)}% · ${fmtDate(p.date)}${p.stock?' · приход':''}</b><div class="milestone-edit"><input class="milestone-input" type="number" min="0" step="0.01" value="${p.used}" data-stage-override="${p.id}" aria-label="Платёж ${p.label} по счёту №${escapeHtml(inv.number)}"><button class="milestone-reset" type="button" data-reset-stage="${p.id}" ${manual?'':'hidden'} aria-label="Вернуть автоматический расчёт этапа">↺</button></div><span class="milestone-meta">${escapeHtml(meta)}</span></div>`;
+  const manual=p.manualOverride, recalc=p.recalculated, manualDate=p.dateManualOverride;
+  const amountMeta=manual?`ручная сумма · база ${fmtMoney(p.auto)}`:recalc?`пересчитано · база ${fmtMoney(p.auto)}`:`база суммы ${fmtMoney(p.auto)}`;
+  const dateMeta=manualDate?`ручная дата · база ${fmtDate(p.autoDate)}`:`база даты ${fmtDate(p.autoDate)}`;
+  return `<div class="milestone ${p.stock?'stock':''}"><b>${fmtNumber(p.pct)}%${p.stock?' · приход':''}</b><div class="milestone-date-edit"><input class="milestone-date-input" type="date" value="${iso(p.date)}" data-stage-date="${p.id}" aria-label="Дата платежа ${p.label} по счёту №${escapeHtml(inv.number)}"><button class="milestone-reset" type="button" data-reset-stage-date="${p.id}" ${manualDate?'':'hidden'} aria-label="Вернуть автоматическую дату этапа">↺</button></div><span class="milestone-meta">${escapeHtml(dateMeta)}</span><div class="milestone-edit"><input class="milestone-input" type="number" min="0" step="0.01" value="${p.used}" data-stage-override="${p.id}" aria-label="Сумма платежа ${p.label} по счёту №${escapeHtml(inv.number)}"><button class="milestone-reset" type="button" data-reset-stage="${p.id}" ${manual?'':'hidden'} aria-label="Вернуть автоматический расчёт суммы этапа">↺</button></div><span class="milestone-meta">${escapeHtml(amountMeta)}</span></div>`;
 }
 function renderInvoices(){
   const body=$('invoiceBody'); body.innerHTML='';
@@ -353,11 +369,34 @@ function renderInvoices(){
     const inv=state.invoices.find(x=>x.id===btn.dataset.delete); if(!inv)return;
     const linkedCount=state.manualPayments.filter(p=>p.invoiceId===inv.id).length;
     openConfirm('Удалить счёт?',`Будет удалён <span class="confirm-object">счёт от ${fmtDate(parseDate(inv.date))} №${escapeHtml(inv.number)}</span>, его автоматические этапы, ${linkedCount} ${ruPlural(linkedCount,'привязанный дополнительный платёж','привязанных дополнительных платежа','привязанных дополнительных платежей')} и приход ${fmtInt(totalInvoiceQty(inv))} шт. Это изменит план продаж и денежный поток.`,'Удалить счёт',()=>{
-      state.invoices=state.invoices.filter(x=>x.id!==inv.id); Object.keys(state.paymentOverrides).filter(k=>k.startsWith(inv.id+':')).forEach(k=>delete state.paymentOverrides[k]); state.manualPayments=state.manualPayments.filter(p=>p.invoiceId!==inv.id); saveState('Счёт удалён'); renderAll(); setStatus('Счёт удалён, будущие платежи и план продаж пересчитаны.','success');
+      state.invoices=state.invoices.filter(x=>x.id!==inv.id); Object.keys(state.paymentOverrides).filter(k=>k.startsWith(inv.id+':')).forEach(k=>delete state.paymentOverrides[k]); Object.keys(state.paymentDateOverrides).filter(k=>k.startsWith(inv.id+':')).forEach(k=>delete state.paymentDateOverrides[k]); state.manualPayments=state.manualPayments.filter(p=>p.invoiceId!==inv.id); saveState('Счёт удалён'); renderAll(); setStatus('Счёт удалён, будущие платежи и план продаж пересчитаны.','success');
     });
   }));
 }
 function bindStageEditors(root){
+  root.querySelectorAll('[data-stage-date]').forEach(inp=>inp.addEventListener('change',()=>{
+    const id=inp.dataset.stageDate, value=inp.value, invoiceId=invoiceIdFromStageId(id), inv=state.invoices.find(x=>x.id===invoiceId);
+    if(!inv || !value){ renderAll(); setStatus('Дата не изменена: укажите корректную дату платежа.','error'); return; }
+    const had=hasOwn(state.paymentDateOverrides,id), previous=state.paymentDateOverrides[id];
+    state.paymentDateOverrides[id]=value;
+    if(!stageSequenceIsValid(inv)){
+      if(had)state.paymentDateOverrides[id]=previous; else delete state.paymentDateOverrides[id];
+      renderAll(); setStatus('Дата не изменена: этапы счёта должны идти по порядку — 30% → 30% → 40%.','error'); return;
+    }
+    const stage=baseStages(inv).find(x=>x.id===id);
+    saveState('Дата этапа изменена'); renderAll();
+    setStatus(stage?.stock?'Дата 40% изменена. Приход товара, план продаж и денежный поток пересчитаны.':'Дата платежа изменена. План продаж, денежный поток и более поздние расчёты счёта обновлены.','success');
+  }));
+  root.querySelectorAll('[data-reset-stage-date]').forEach(btn=>btn.addEventListener('click',()=>{
+    const id=btn.dataset.resetStageDate, invoiceId=invoiceIdFromStageId(id), inv=state.invoices.find(x=>x.id===invoiceId);
+    delete state.paymentDateOverrides[id];
+    if(inv && !stageSequenceIsValid(inv)){
+      setStatus('Автоматическая дата восстановлена, но порядок этапов нарушен другой ручной датой. Проверьте даты счёта.','error');
+    } else {
+      setStatus('Автоматическая дата восстановлена. План и денежный поток пересчитаны.','success');
+    }
+    saveState('Автоматическая дата восстановлена'); renderAll();
+  }));
   root.querySelectorAll('[data-stage-override]').forEach(inp=>inp.addEventListener('change',()=>{
     const value=Math.max(0,Number(inp.value||0)); state.paymentOverrides[inp.dataset.stageOverride]=money2(value); saveState('Сумма этапа изменена'); renderAll(); setStatus('Сумма изменена. Более поздние автоматические платежи этого счёта пересчитаны.','success');
   }));
@@ -372,13 +411,15 @@ function renderPayments(model){
     const tr=document.createElement('tr'); tr.className=(historical?'row-history ':'')+(p.stock?'row-stock ':'')+(p.kind==='manual'?'row-manual ':'')+(noSales&&!historical?'row-gap':'');
     const inv=p.invoiceId?state.invoices.find(x=>x.id===p.invoiceId):null;
     const invoiceCell=inv?`<div class="invoice-date">${fmtDate(parseDate(inv.date))}</div><div class="invoice-no">№${escapeHtml(inv.number)}</div>`:'<span class="pill extra">без счёта</span>';
+    const dateInput=isStage?`<div class="date-edit-wrap"><input class="date-input" type="date" value="${iso(p.date)}" data-stage-date="${p.id}" aria-label="Текущая дата ${p.label} по счёту №${escapeHtml(p.invoiceNumber)}"><button class="reset-override" type="button" data-reset-stage-date="${p.id}" ${p.dateManualOverride?'':'hidden'} aria-label="Вернуть автоматическую дату этапа">↺</button></div><div class="cell-meta">база: ${fmtDate(p.autoDate)}</div>`:`<span class="mono">${fmtDate(p.date)}</span>`;
     const input=isStage?`<div class="override-wrap"><input class="amount-input" type="number" min="0" step="0.01" value="${p.used}" data-stage-override="${p.id}" aria-label="Текущий платёж ${p.label} по счёту №${escapeHtml(p.invoiceNumber)}"><button class="reset-override" type="button" data-reset-stage="${p.id}" ${p.manualOverride?'':'hidden'} aria-label="Вернуть автоматический расчёт этапа">↺</button></div>`:`<div class="override-wrap"><input class="amount-input" type="number" min="0" step="0.01" value="${p.used}" data-manual-amount="${p.manualPaymentId}" aria-label="Сумма дополнительного платежа"></div>`;
     const status=[historical?'<span class="pill history">до старта · история</span>':noSales?'<span class="pill gap">до первой выплаты</span>':'<span class="pill plan">участвует в плане</span>'];
     if(p.kind==='manual')status.push('<span class="pill extra">добавлен вручную</span>');
+    if(p.dateManualOverride)status.push('<span class="pill manual-date">ручная дата</span>');
     if(p.manualOverride)status.push('<span class="pill manual">ручная сумма</span>');
     if(p.recalculated)status.push('<span class="pill recalc">пересчитан</span>');
     const actions=p.kind==='manual'?`<div class="actions"><button class="icon-btn" type="button" data-edit-payment="${p.manualPaymentId}" aria-label="Изменить дополнительный платёж">✎</button><button class="icon-btn danger" type="button" data-delete-payment="${p.manualPaymentId}" aria-label="Удалить дополнительный платёж">×</button></div>`:'—';
-    tr.innerHTML=`<td class="date-cell mono">${fmtDate(p.date)}</td><td>${invoiceCell}</td><td>${escapeHtml(p.label)}</td><td class="num money">${isStage?fmtMoney(p.auto):'—'}</td>
+    tr.innerHTML=`<td>${dateInput}</td><td>${invoiceCell}</td><td>${escapeHtml(p.label)}</td><td class="num money">${isStage?fmtMoney(p.auto):'—'}</td>
       <td class="num">${input}</td><td class="num mono">${model.net>0?fmtInt(Math.ceil(p.used/model.net)):'—'}</td><td>${status.join(' ')}</td><td>${p.stock&&inv?`<span class="pill stock">+${fmtInt(totalInvoiceQty(inv))} шт.</span>`:'—'}</td><td>${actions}</td>`;
     body.appendChild(tr);
   });
@@ -483,8 +524,8 @@ function downloadText(filename,text,type='text/plain;charset=utf-8'){
 function csvCell(v){return '"'+String(v??'').replace(/"/g,'""')+'"';}
 function exportPayments(){
   const m=computeModel();
-  const rows=[['Дата','Дата счета','№ счета','Тип','Этап','База, руб.','Текущий платеж, руб.','Приход, шт.','Статус']];
-  m.payments.forEach(p=>rows.push([fmtDate(p.date),p.invoiceDate?fmtDate(parseDate(p.invoiceDate)):'',p.invoiceNumber||'',p.kind==='manual'?'Дополнительный':'Автоматический',p.label,p.auto??'',p.used,p.qty,p.date<m.start?'История':p.recalculated?'Пересчитан':p.manualOverride?'Ручная сумма':'План']));
+  const rows=[['Текущая дата','Базовая дата','Дата счета','№ счета','Тип','Этап','База, руб.','Текущий платеж, руб.','Приход, шт.','Статус']];
+  m.payments.forEach(p=>rows.push([fmtDate(p.date),p.autoDate?fmtDate(p.autoDate):'',p.invoiceDate?fmtDate(parseDate(p.invoiceDate)):'',p.invoiceNumber||'',p.kind==='manual'?'Дополнительный':'Автоматический',p.label,p.auto??'',p.used,p.qty,p.date<m.start?'История':p.dateManualOverride?'Ручная дата':p.recalculated?'Пересчитан':p.manualOverride?'Ручная сумма':'План']));
   downloadText('payment_calendar.csv','\uFEFF'+rows.map(r=>r.map(csvCell).join(';')).join('\r\n'),'text/csv;charset=utf-8');setStatus('CSV платежей подготовлен.','success');
 }
 function exportSales(){ const m=computeModel(); const rows=[['Период','Дата выплаты','Факт, шт.','Доп. план, шт.','Всего, шт.','Поступление, руб.','Остаток, шт.']];m.periods.forEach(p=>rows.push([`${fmtDate(p.start)}–${fmtDate(p.end)}`,fmtDate(p.payout),p.actual,p.plan,p.actual+p.plan,(p.actual+p.plan)*m.net,p.stockBalance]));downloadText('sales_plan.csv','\uFEFF'+rows.map(r=>r.map(csvCell).join(';')).join('\r\n'),'text/csv;charset=utf-8');setStatus('CSV продаж подготовлен.','success');}
@@ -510,7 +551,15 @@ $('invoiceForm').addEventListener('submit',e=>{
   const errs=[];if(!number)errs.push('укажите № счёта');if(!date)errs.push('укажите дату счёта');if(!(total>0))errs.push('сумма счёта должна быть больше 0');if(qty<=0)errs.push('укажите количество хотя бы по одному SKU');
   if(errs.length){$('invoiceFormError').textContent='Проверьте данные: '+errs.join('; ')+'.';const first=!number?$('invoiceNumber'):!date?$('invoiceDate'):!(total>0)?$('invoiceTotal'):$('qty-310701');first.setAttribute('aria-invalid','true');first.focus();return;}
   ['invoiceNumber','invoiceDate','invoiceTotal',...skuCatalog.map(s=>`qty-${s.article}`)].forEach(id=>$(id).removeAttribute('aria-invalid'));
-  if(editingInvoiceId){const inv=state.invoices.find(x=>x.id===editingInvoiceId);Object.assign(inv,{number,date,total,items});saveState('Счёт изменён');setStatus('Счёт изменён. Его платежи, приход и будущий план продаж пересчитаны.','success');}
+  if(editingInvoiceId){
+    const inv=state.invoices.find(x=>x.id===editingInvoiceId);
+    const draft={...inv,number,date,total,items};
+    if(!stageSequenceIsValid(draft)){
+      $('invoiceFormError').textContent='Новая дата счёта конфликтует с вручную зафиксированными датами платежей. Сначала верните или измените ручные даты этапов.';
+      $('invoiceDate').setAttribute('aria-invalid','true'); $('invoiceDate').focus(); return;
+    }
+    Object.assign(inv,{number,date,total,items});saveState('Счёт изменён');setStatus('Счёт изменён. Его платежи, приход и будущий план продаж пересчитаны.','success');
+  }
   else{state.invoices.push({id:uid(),number,date,total,items,sourceNote:'Счёт введён вручную в приложении.'});saveState('Счёт добавлен');setStatus('Счёт добавлен. Создан график платежей и приход товара.','success');}
   $('invoiceDialog').close();renderAll();
 });

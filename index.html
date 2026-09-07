@@ -59,7 +59,7 @@
         <div class="field"><label for="p3Months">Финальный платёж через, мес.</label><input id="p3Months" type="number" min="0" max="24" step="1"></div>
         <div class="field"><label for="p3Pct">Финальный платёж, %</label><input id="p3Pct" type="number" min="0" max="100" step="1"></div>
       </div>
-      <div class="assumption-note">40% считается от <b>даты счёта + указанное число календарных месяцев</b>. На эту же дату в модели приходит количество товара из строк счёта. Любой этап можно изменить прямо в реестре счетов или в разделе «Платежи». После ручного изменения или дополнительного платежа остаток счёта автоматически перераспределяется только на более поздние автоматические этапы; уже более ранние этапы не меняются.</div>
+      <div class="assumption-note">40% считается от <b>даты счёта + указанное число календарных месяцев</b>. На эту же дату в модели приходит количество товара из строк счёта. Дату и сумму любого этапа можно изменить прямо в реестре счетов или в разделе «Платежи». Ручная дата фиксирует только выбранный этап; остальные даты сохраняют свои правила от даты счёта. После ручного изменения или дополнительного платежа остаток счёта автоматически перераспределяется только на более поздние автоматические этапы; уже более ранние этапы не меняются.</div>
     </div>
   </details>
 
@@ -86,14 +86,14 @@
 
   <section class="panel active" id="panel-invoices" role="tabpanel" aria-labelledby="tab-invoices" tabindex="0">
     <div class="card section-card">
-      <div class="section-head"><div><h2>Реестр счетов</h2><p>Суммы 30 / 30 / 40 редактируются прямо здесь. Изменение одного платежа пересчитывает только более поздние автоматические платежи этого счёта.</p></div><button class="btn primary" type="button" id="addInvoiceBtn2">+ Добавить счёт</button></div>
+      <div class="section-head"><div><h2>Реестр счетов</h2><p>Даты и суммы 30 / 30 / 40 редактируются прямо здесь. Изменение даты пересчитывает план продаж и денежный поток; изменение суммы пересчитывает более поздние автоматические платежи этого счёта.</p></div><button class="btn primary" type="button" id="addInvoiceBtn2">+ Добавить счёт</button></div>
       <div class="section-body table-wrap"><table><caption>Счета на закупку смесителей</caption><thead><tr><th>Дата / № счёта</th><th class="num">Сумма счёта, ₽</th><th class="num">Количество, шт.</th><th>Платежи 30 / 30 / 40</th><th class="num">Баланс счёта</th><th>Дата прихода</th><th class="num">Приход, шт.</th><th class="num">Действия</th></tr></thead><tbody id="invoiceBody"></tbody></table></div>
     </div>
   </section>
 
   <section class="panel" id="panel-payments" role="tabpanel" aria-labelledby="tab-payments" tabindex="0">
     <div class="card section-card">
-      <div class="section-head"><div><h2>Платёжный календарь</h2><p>Можно менять рассчитанные этапы и добавлять дополнительные платежи. Платёж, привязанный к счёту, уменьшает только его будущие автоматические этапы.</p></div><button class="btn primary" type="button" id="addPaymentBtn2">+ Добавить платёж</button></div>
+      <div class="section-head"><div><h2>Платёжный календарь</h2><p>Можно менять даты и суммы рассчитанных этапов и добавлять дополнительные платежи. Платёж, привязанный к счёту, уменьшает только его будущие автоматические этапы.</p></div><button class="btn primary" type="button" id="addPaymentBtn2">+ Добавить платёж</button></div>
       <div class="section-body table-wrap"><table><caption>Платёжный календарь</caption><thead><tr><th>Дата</th><th>Счёт</th><th>Этап</th><th class="num">База, ₽</th><th class="num">Текущий платёж, ₽</th><th class="num">Эквивалент продаж, шт.</th><th>Статус</th><th>Приход товара</th><th class="num">Действия</th></tr></thead><tbody id="paymentsBody"></tbody></table></div>
     </div>
   </section>
@@ -107,7 +107,7 @@
 
   <section class="panel" id="panel-stock" role="tabpanel" aria-labelledby="tab-stock" tabindex="0">
     <div class="two-col">
-      <div class="card section-card"><div class="section-head"><div><h2>Приходы товара</h2><p>Каждый приход происходит в дату финального 40%-го платежа.</p></div></div><div class="table-wrap"><table><caption>Приходы товара по счетам</caption><thead><tr><th>Дата прихода</th><th>Счёт</th><th class="num">Всего, шт.</th><th>Состав</th><th>Относительно старта</th></tr></thead><tbody id="stockEventsBody"></tbody></table></div></div>
+      <div class="card section-card"><div class="section-head"><div><h2>Приходы товара</h2><p>Каждый приход происходит в текущую дату финального 40%-го платежа. Если дату 40% перенести вручную, приход товара переносится вместе с ней.</p></div></div><div class="table-wrap"><table><caption>Приходы товара по счетам</caption><thead><tr><th>Дата прихода</th><th>Счёт</th><th class="num">Всего, шт.</th><th>Состав</th><th>Относительно старта</th></tr></thead><tbody id="stockEventsBody"></tbody></table></div></div>
       <div class="card section-card"><div class="section-head"><div><h2>Количество по 6 SKU</h2><p>Количество берётся из строк загруженных счетов, а не из средней себестоимости.</p></div></div><div class="table-wrap"><table><caption>Количество закупленного товара по SKU</caption><thead><tr><th>Артикул</th><th>Цвет / вариант</th><th class="num">До старта, шт.</th><th class="num">После старта, шт.</th><th class="num">Всего по счетам, шт.</th></tr></thead><tbody id="skuStockBody"></tbody></table></div></div>
     </div>
   </section>
@@ -121,7 +121,7 @@
     <div class="card section-card" style="margin-top:12px"><div class="section-head"><div><h2>Сводка по месяцам продаж</h2><p>Табличный эквивалент графика для проверки цифр.</p></div></div><div class="table-wrap"><table><caption>Сводка продаж по месяцам</caption><thead><tr><th>Месяц</th><th class="num">Факт, шт.</th><th class="num">Доп. план, шт.</th><th class="num">Всего, шт.</th><th class="num">Выплаты от этих продаж, ₽</th></tr></thead><tbody id="monthBody"></tbody></table></div></div>
   </section>
 
-  <div class="footer">Версия 4 · автономное приложение · данные сохраняются только в localStorage этого браузера · перенос между компьютерами через JSON</div>
+  <div class="footer">Версия 5 · автономное приложение · данные сохраняются только в localStorage этого браузера · перенос между компьютерами через JSON</div>
 </div>
 
 <dialog class="dialog" id="invoiceDialog" aria-labelledby="invoiceDialogTitle">
