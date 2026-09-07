@@ -1,0 +1,30 @@
+name: Finalize arrival v6
+
+on:
+  push:
+    paths:
+      - '.github/workflows/finalize-arrival-v6.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Finalize v6 arrival behavior
+        run: python tools/finalize_arrival_v6.py
+      - name: Validate JavaScript syntax
+        run: node --check app.js
+      - name: Commit finalization
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.js UX-CONTRACT.md DESIGN.md README.md
+          git diff --cached --quiet && exit 0
+          git commit -m "Finalize editable arrival date behavior [skip ci]"
+          git push
