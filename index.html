@@ -13,7 +13,7 @@
       <div>
         <div class="eyebrow">VOLMAX · PROCUREMENT / SALES CASHFLOW</div>
         <h1>Платёжный календарь смесителей</h1>
-        <p>Счёт задаёт график оплат и дату прихода товара. Модель от даты платежа назад считает, сколько смесителей нужно продать, чтобы деньги успели поступить.</p>
+        <p>Счёт задаёт график оплат и базовую дату прихода товара. Реальную дату прихода можно изменить отдельно, а модель сразу пересчитает доступный остаток и нужный темп продаж.</p>
       </div>
       <div class="save-state" id="saveState" aria-live="polite">Сохранено в браузере</div>
     </div>
@@ -22,7 +22,7 @@
       <div class="rail-arrow" aria-hidden="true">→</div>
       <div class="rail-step"><div class="rail-pct" id="railPct2">30%</div><div class="rail-copy"><b id="railDays">+50 дней</b><span>второй платёж</span></div></div>
       <div class="rail-arrow" aria-hidden="true">→</div>
-      <div class="rail-step stock-step"><div class="rail-pct" id="railPct3">40%</div><div class="rail-copy"><b id="railMonths">+2 месяца · приход</b><span>оплата и пополнение остатков</span></div></div>
+      <div class="rail-step stock-step"><div class="rail-pct" id="railPct3">40%</div><div class="rail-copy"><b id="railMonths">+2 месяца · 40%</b><span>финальный платёж; приход по умолчанию</span></div></div>
     </div>
   </header>
 
@@ -59,7 +59,7 @@
         <div class="field"><label for="p3Months">Финальный платёж через, мес.</label><input id="p3Months" type="number" min="0" max="24" step="1"></div>
         <div class="field"><label for="p3Pct">Финальный платёж, %</label><input id="p3Pct" type="number" min="0" max="100" step="1"></div>
       </div>
-      <div class="assumption-note">40% считается от <b>даты счёта + указанное число календарных месяцев</b>. На эту же дату в модели приходит количество товара из строк счёта. Дату и сумму любого этапа можно изменить прямо в реестре счетов или в разделе «Платежи». Ручная дата фиксирует только выбранный этап; остальные даты сохраняют свои правила от даты счёта. После ручного изменения или дополнительного платежа остаток счёта автоматически перераспределяется только на более поздние автоматические этапы; уже более ранние этапы не меняются.</div>
+      <div class="assumption-note">40% считается от <b>даты счёта + указанное число календарных месяцев</b>. По умолчанию дата прихода равна текущей дате 40%, но её можно изменить отдельно. После этого дата оплаты 40% и дата прихода живут независимо, пока вы не нажмёте ↺ у даты прихода. Дату и сумму любого этапа также можно менять вручную; все зависимые остатки, продажи и денежный поток пересчитываются сразу.</div>
     </div>
   </details>
 
@@ -70,7 +70,7 @@
     <div class="card kpi"><div class="kpi-label">Доп. продажи</div><div class="kpi-value" id="kpiUnits">—</div><div class="kpi-sub">план сверх введённого факта</div></div>
     <div class="card kpi"><div class="kpi-label">Макс. неделя</div><div class="kpi-value" id="kpiMaxWeek">—</div><div class="kpi-sub" id="kpiMaxWeekSub">—</div></div>
     <div class="card kpi" id="kpiGapCard"><div class="kpi-label">Внешние деньги</div><div class="kpi-value" id="kpiGap">—</div><div class="kpi-sub">кассовый разрыв после доступных продаж</div></div>
-    <div class="card kpi" data-tone="stock"><div class="kpi-label">Остаток на старте</div><div class="kpi-value" id="kpiOpeningStock">—</div><div class="kpi-sub" id="kpiOpeningStockSub">по приходам 40% + корректировка</div></div>
+    <div class="card kpi" data-tone="stock"><div class="kpi-label">Остаток на старте</div><div class="kpi-value" id="kpiOpeningStock">—</div><div class="kpi-sub" id="kpiOpeningStockSub">по датам прихода + корректировка</div></div>
     <div class="card kpi"><div class="kpi-label">Остаток на конец</div><div class="kpi-value" id="kpiEndStock">—</div><div class="kpi-sub" id="kpiNextStock">—</div></div>
   </div>
 
@@ -86,7 +86,7 @@
 
   <section class="panel active" id="panel-invoices" role="tabpanel" aria-labelledby="tab-invoices" tabindex="0">
     <div class="card section-card">
-      <div class="section-head"><div><h2>Реестр счетов</h2><p>Даты и суммы 30 / 30 / 40 редактируются прямо здесь. Изменение даты пересчитывает план продаж и денежный поток; изменение суммы пересчитывает более поздние автоматические платежи этого счёта.</p></div><button class="btn primary" type="button" id="addInvoiceBtn2">+ Добавить счёт</button></div>
+      <div class="section-head"><div><h2>Реестр счетов</h2><p>Даты и суммы 30 / 30 / 40 и фактическая дата прихода редактируются прямо здесь. Дата прихода по умолчанию следует за 40%, но может быть зафиксирована отдельно.</p></div><button class="btn primary" type="button" id="addInvoiceBtn2">+ Добавить счёт</button></div>
       <div class="section-body table-wrap"><table><caption>Счета на закупку смесителей</caption><thead><tr><th>Дата / № счёта</th><th class="num">Сумма счёта, ₽</th><th class="num">Количество, шт.</th><th>Платежи 30 / 30 / 40</th><th class="num">Баланс счёта</th><th>Дата прихода</th><th class="num">Приход, шт.</th><th class="num">Действия</th></tr></thead><tbody id="invoiceBody"></tbody></table></div>
     </div>
   </section>
@@ -107,7 +107,7 @@
 
   <section class="panel" id="panel-stock" role="tabpanel" aria-labelledby="tab-stock" tabindex="0">
     <div class="two-col">
-      <div class="card section-card"><div class="section-head"><div><h2>Приходы товара</h2><p>Каждый приход происходит в текущую дату финального 40%-го платежа. Если дату 40% перенести вручную, приход товара переносится вместе с ней.</p></div></div><div class="table-wrap"><table><caption>Приходы товара по счетам</caption><thead><tr><th>Дата прихода</th><th>Счёт</th><th class="num">Всего, шт.</th><th>Состав</th><th>Относительно старта</th></tr></thead><tbody id="stockEventsBody"></tbody></table></div></div>
+      <div class="card section-card"><div class="section-head"><div><h2>Приходы товара</h2><p>Дата прихода редактируется отдельно. Пока она не зафиксирована вручную, она автоматически следует за текущей датой финального платежа 40%.</p></div></div><div class="table-wrap"><table><caption>Приходы товара по счетам</caption><thead><tr><th>Дата прихода</th><th>Счёт</th><th class="num">Всего, шт.</th><th>Состав</th><th>Относительно старта</th></tr></thead><tbody id="stockEventsBody"></tbody></table></div></div>
       <div class="card section-card"><div class="section-head"><div><h2>Количество по 6 SKU</h2><p>Количество берётся из строк загруженных счетов, а не из средней себестоимости.</p></div></div><div class="table-wrap"><table><caption>Количество закупленного товара по SKU</caption><thead><tr><th>Артикул</th><th>Цвет / вариант</th><th class="num">До старта, шт.</th><th class="num">После старта, шт.</th><th class="num">Всего по счетам, шт.</th></tr></thead><tbody id="skuStockBody"></tbody></table></div></div>
     </div>
   </section>

@@ -12,7 +12,7 @@ const skuCatalog = [
   {article:'310803', label:'Графит / серый'}
 ];
 const defaultState = () => ({
-  version:5,
+  version:6,
   settings:{
     modelStart:'2026-09-10', horizonMonths:6, unitCost:1150, multiplier:2.5, startingCash:0,
     periodDays:7, payoutLagMonths:1, openingStockCorrection:0,
@@ -32,6 +32,7 @@ const defaultState = () => ({
   ],
   paymentOverrides:{},
   paymentDateOverrides:{},
+  stockDateOverrides:{},
   manualPayments:[],
   actualSales:{}
 });
@@ -58,9 +59,10 @@ const netPerUnit = () => Math.max(0,Number(state.settings.unitCost||0)*Number(st
 
 function normalizeState(raw){
   if(!raw || !raw.settings || !Array.isArray(raw.invoices)) return defaultState();
-  raw.version=5;
+  raw.version=6;
   raw.paymentOverrides ||= {};
   raw.paymentDateOverrides ||= {};
+  raw.stockDateOverrides ||= {};
   raw.manualPayments ||= [];
   raw.actualSales ||= {};
   raw.settings = {...defaultState().settings, ...raw.settings};
@@ -184,7 +186,10 @@ function allPayments(){
 function stockEvents(){
   return state.invoices.map(inv=>{
     const p3=baseStages(inv).find(x=>x.stage==='p3');
-    return {date:p3.date,autoDate:p3.autoDate,dateManualOverride:p3.dateManualOverride,invoiceId:inv.id,invoiceNumber:inv.number,invoiceDate:inv.date,qty:totalInvoiceQty(inv),items:{...inv.items}};
+    const dateManualOverride=hasOwn(state.stockDateOverrides,inv.id);
+    const autoDate=new Date(p3.date);
+    const date=dateManualOverride?parseDate(state.stockDateOverrides[inv.id]):new Date(autoDate);
+    return {date,autoDate,dateManualOverride,paymentDate:p3.date,invoiceId:inv.id,invoiceNumber:inv.number,invoiceDate:inv.date,qty:totalInvoiceQty(inv),items:{...inv.items}};
   }).sort((a,b)=>a.date-b.date);
 }
 function makePeriods(){
@@ -299,7 +304,7 @@ function renderTerms(){
   $('railPct2').textContent=`${fmtNumber(state.settings.p2Pct)}%`;
   $('railPct3').textContent=`${fmtNumber(state.settings.p3Pct)}%`;
   $('railDays').textContent=`+${fmtInt(state.settings.p2Days)} дней`;
-  $('railMonths').textContent=`+${fmtInt(state.settings.p3Months)} ${ruPlural(state.settings.p3Months,'месяц','месяца','месяцев')} · приход`;
+  $('railMonths').textContent=`+${fmtInt(state.settings.p3Months)} ${ruPlural(state.settings.p3Months,'месяц','месяца','месяцев')} · 40%`;
 }
 function renderAlerts(model){
   const items=[];
@@ -310,7 +315,7 @@ function renderAlerts(model){
   if(model.recalculatedCount>0)items.push(`<div class="banner info"><span>↻</span><div><b>${model.recalculatedCount} ${ruPlural(model.recalculatedCount,'будущий этап пересчитан','будущих этапа пересчитаны','будущих этапов пересчитаны')} автоматически.</b> Ручные и дополнительные платежи считаются фиксированными, остаток распределяется только на более поздние автоматические этапы.</div></div>`);
   if(model.externalTotal>0.01)items.push(`<div class="banner warning"><span>₽</span><div><b>Кассовый разрыв ${fmtMoney(model.externalTotal)}.</b> На соответствующие даты выплаты от продаж ещё не успевают прийти или физического товара недостаточно для нужного объёма продаж. Смотрите строки «Внешние деньги» в денежном потоке.</div></div>`);
   const actualStockViolation=model.periods.some(p=>p.stockBalance<0);
-  if(actualStockViolation)items.push(`<div class="banner danger"><span>!</span><div><b>Продажи превышают физический доступный товар.</b> Проверьте фактические продажи, дату прихода финального платежа или корректировку остатка на старте.</div></div>`);
+  if(actualStockViolation)items.push(`<div class="banner danger"><span>!</span><div><b>Продажи превышают физический доступный товар.</b> Проверьте фактические продажи, дату прихода товара или корректировку остатка на старте.</div></div>`);
   const hist=stockEvents().filter(e=>e.date<model.start).reduce((a,e)=>a+e.qty,0);
   if(hist>0)items.push(`<div class="banner info"><span>↳</span><div>До ${fmtDate(model.start)} по правилам оплаты уже есть приходы на <b>${fmtInt(hist)} шт.</b> В модели они формируют стартовый остаток. Если часть товара уже продана, внесите минус в «Корректировка остатка на старте».</div></div>`);
   $('alerts').innerHTML=items.join('');
@@ -338,12 +343,23 @@ function stageMilestone(inv,p){
   const manual=p.manualOverride, recalc=p.recalculated, manualDate=p.dateManualOverride;
   const amountMeta=manual?`ручная сумма · база ${fmtMoney(p.auto)}`:recalc?`пересчитано · база ${fmtMoney(p.auto)}`:`база суммы ${fmtMoney(p.auto)}`;
   const dateMeta=manualDate?`ручная дата · база ${fmtDate(p.autoDate)}`:`база даты ${fmtDate(p.autoDate)}`;
-  return `<div class="milestone ${p.stock?'stock':''}"><b>${fmtNumber(p.pct)}%${p.stock?' · приход':''}</b><div class="milestone-date-edit"><input class="milestone-date-input" type="date" value="${iso(p.date)}" data-stage-date="${p.id}" aria-label="Дата платежа ${p.label} по счёту №${escapeHtml(inv.number)}"><button class="milestone-reset" type="button" data-reset-stage-date="${p.id}" ${manualDate?'':'hidden'} aria-label="Вернуть автоматическую дату этапа">↺</button></div><span class="milestone-meta">${escapeHtml(dateMeta)}</span><div class="milestone-edit"><input class="milestone-input" type="number" min="0" step="0.01" value="${p.used}" data-stage-override="${p.id}" aria-label="Сумма платежа ${p.label} по счёту №${escapeHtml(inv.number)}"><button class="milestone-reset" type="button" data-reset-stage="${p.id}" ${manual?'':'hidden'} aria-label="Вернуть автоматический расчёт суммы этапа">↺</button></div><span class="milestone-meta">${escapeHtml(amountMeta)}</span></div>`;
+  return `<div class="milestone ${p.stock?'stock':''}"><b>${fmtNumber(p.pct)}%${p.stock?' · финал':''}</b><div class="milestone-date-edit"><input class="milestone-date-input" type="date" value="${iso(p.date)}" data-stage-date="${p.id}" aria-label="Дата платежа ${p.label} по счёту №${escapeHtml(inv.number)}"><button class="milestone-reset" type="button" data-reset-stage-date="${p.id}" ${manualDate?'':'hidden'} aria-label="Вернуть автоматическую дату этапа">↺</button></div><span class="milestone-meta">${escapeHtml(dateMeta)}</span><div class="milestone-edit"><input class="milestone-input" type="number" min="0" step="0.01" value="${p.used}" data-stage-override="${p.id}" aria-label="Сумма платежа ${p.label} по счёту №${escapeHtml(inv.number)}"><button class="milestone-reset" type="button" data-reset-stage="${p.id}" ${manual?'':'hidden'} aria-label="Вернуть автоматический расчёт суммы этапа">↺</button></div><span class="milestone-meta">${escapeHtml(amountMeta)}</span></div>`;
+}
+function arrivalEditor(inv,e){
+  if(!inv||!e)return '—';
+  const meta=e.dateManualOverride?`ручная дата · база по 40% ${fmtDate(e.autoDate)}`:`по текущей дате 40% ${fmtDate(e.autoDate)}`;
+  return `<div class="arrival-edit"><div class="date-edit-wrap"><input class="date-input arrival-date-input" type="date" value="${iso(e.date)}" data-arrival-date="${inv.id}" aria-label="Дата прихода товара по счёту №${escapeHtml(inv.number)}"><button class="reset-override" type="button" data-reset-arrival-date="${inv.id}" ${e.dateManualOverride?'':'hidden'} aria-label="Снова связать дату прихода с датой 40%">↺</button></div><div class="cell-meta">${escapeHtml(meta)}</div></div>`;
+}
+function linkedArrivalMarkup(inv){
+  if(!inv)return '—';
+  const e=stockEvents().find(x=>x.invoiceId===inv.id); if(!e)return '—';
+  return `<span class="pill stock">+${fmtInt(e.qty)} шт. · ${fmtDate(e.date)}</span>${e.dateManualOverride?' <span class="pill manual-date">ручная дата прихода</span>':''}`;
 }
 function renderInvoices(){
   const body=$('invoiceBody'); body.innerHTML='';
   [...state.invoices].sort((a,b)=>parseDate(a.date)-parseDate(b.date)).forEach(inv=>{
-    const summary=invoiceSchedule(inv), sched=summary.stages, p3=sched.find(p=>p.stage==='p3');
+    const summary=invoiceSchedule(inv), sched=summary.stages;
+    const arrival=stockEvents().find(e=>e.invoiceId===inv.id);
     const linked=state.manualPayments.filter(p=>p.invoiceId===inv.id);
     const tr=document.createElement('tr');
     tr.innerHTML=`
@@ -351,7 +367,7 @@ function renderInvoices(){
       <td class="num money">${fmtMoney(inv.total)}</td><td class="num mono">${fmtInt(totalInvoiceQty(inv))}</td>
       <td><div class="milestones">${sched.map(p=>stageMilestone(inv,p)).join('')}</div>${linked.length?`<div class="payment-link">+ ${linked.length} ${ruPlural(linked.length,'дополнительный платёж','дополнительных платежа','дополнительных платежей')} привязано к счёту</div>`:''}</td>
       <td class="num">${balanceMarkup(summary.balance)}</td>
-      <td class="date-cell"><span class="pill stock">${fmtDate(p3.date)}</span></td><td class="num mono stock-positive">+${fmtInt(totalInvoiceQty(inv))}</td>
+      <td>${arrivalEditor(inv,arrival)}</td><td class="num mono stock-positive">+${fmtInt(totalInvoiceQty(inv))}</td>
       <td><div class="actions"><button class="icon-btn" type="button" data-add-payment-invoice="${inv.id}" aria-label="Добавить платёж к счёту №${escapeHtml(inv.number)}">₽</button><button class="icon-btn" type="button" data-edit="${inv.id}" aria-label="Изменить счёт №${escapeHtml(inv.number)}">✎</button><button class="icon-btn danger" type="button" data-delete="${inv.id}" aria-label="Удалить счёт №${escapeHtml(inv.number)}">×</button></div></td>`;
     body.appendChild(tr);
     const detail=document.createElement('tr'); detail.className='detail-row'; detail.id=`detail-${inv.id}`;
@@ -360,6 +376,7 @@ function renderInvoices(){
     body.appendChild(detail);
   });
   bindStageEditors(body);
+  bindArrivalEditors(body);
   body.querySelectorAll('[data-expand]').forEach(btn=>btn.addEventListener('click',()=>{
     const row=$(`detail-${btn.dataset.expand}`); const open=!row.classList.contains('open'); row.classList.toggle('open',open); btn.setAttribute('aria-expanded',String(open)); btn.textContent=open?'−':'＋';
   }));
@@ -369,7 +386,7 @@ function renderInvoices(){
     const inv=state.invoices.find(x=>x.id===btn.dataset.delete); if(!inv)return;
     const linkedCount=state.manualPayments.filter(p=>p.invoiceId===inv.id).length;
     openConfirm('Удалить счёт?',`Будет удалён <span class="confirm-object">счёт от ${fmtDate(parseDate(inv.date))} №${escapeHtml(inv.number)}</span>, его автоматические этапы, ${linkedCount} ${ruPlural(linkedCount,'привязанный дополнительный платёж','привязанных дополнительных платежа','привязанных дополнительных платежей')} и приход ${fmtInt(totalInvoiceQty(inv))} шт. Это изменит план продаж и денежный поток.`,'Удалить счёт',()=>{
-      state.invoices=state.invoices.filter(x=>x.id!==inv.id); Object.keys(state.paymentOverrides).filter(k=>k.startsWith(inv.id+':')).forEach(k=>delete state.paymentOverrides[k]); Object.keys(state.paymentDateOverrides).filter(k=>k.startsWith(inv.id+':')).forEach(k=>delete state.paymentDateOverrides[k]); state.manualPayments=state.manualPayments.filter(p=>p.invoiceId!==inv.id); saveState('Счёт удалён'); renderAll(); setStatus('Счёт удалён, будущие платежи и план продаж пересчитаны.','success');
+      state.invoices=state.invoices.filter(x=>x.id!==inv.id); Object.keys(state.paymentOverrides).filter(k=>k.startsWith(inv.id+':')).forEach(k=>delete state.paymentOverrides[k]); Object.keys(state.paymentDateOverrides).filter(k=>k.startsWith(inv.id+':')).forEach(k=>delete state.paymentDateOverrides[k]); delete state.stockDateOverrides[inv.id]; state.manualPayments=state.manualPayments.filter(p=>p.invoiceId!==inv.id); saveState('Счёт удалён'); renderAll(); setStatus('Счёт удалён, будущие платежи, приходы и план продаж пересчитаны.','success');
     });
   }));
 }
@@ -404,6 +421,20 @@ function bindStageEditors(root){
     delete state.paymentOverrides[btn.dataset.resetStage]; saveState('Автоматический расчёт восстановлен'); renderAll(); setStatus('Ручная сумма снята. Более поздние платежи пересчитаны.','success');
   }));
 }
+function bindArrivalEditors(root){
+  root.querySelectorAll('[data-arrival-date]').forEach(inp=>inp.addEventListener('change',()=>{
+    const invoiceId=inp.dataset.arrivalDate, value=inp.value, inv=state.invoices.find(x=>x.id===invoiceId);
+    if(!inv || !value){ renderAll(); setStatus('Дата прихода не изменена: укажите корректную дату.','error'); return; }
+    state.stockDateOverrides[invoiceId]=value;
+    saveState('Дата прихода изменена'); renderAll();
+    setStatus('Дата прихода изменена отдельно от 40%. Остатки, доступный товар и план продаж пересчитаны.','success');
+  }));
+  root.querySelectorAll('[data-reset-arrival-date]').forEach(btn=>btn.addEventListener('click',()=>{
+    const invoiceId=btn.dataset.resetArrivalDate; delete state.stockDateOverrides[invoiceId];
+    saveState('Дата прихода снова связана с 40%'); renderAll();
+    setStatus('Дата прихода снова равна текущей дате платежа 40%. Остатки и план продаж пересчитаны.','success');
+  }));
+}
 function renderPayments(model){
   const body=$('paymentsBody'); body.innerHTML='';
   model.payments.forEach(p=>{
@@ -420,7 +451,7 @@ function renderPayments(model){
     if(p.recalculated)status.push('<span class="pill recalc">пересчитан</span>');
     const actions=p.kind==='manual'?`<div class="actions"><button class="icon-btn" type="button" data-edit-payment="${p.manualPaymentId}" aria-label="Изменить дополнительный платёж">✎</button><button class="icon-btn danger" type="button" data-delete-payment="${p.manualPaymentId}" aria-label="Удалить дополнительный платёж">×</button></div>`:'—';
     tr.innerHTML=`<td>${dateInput}</td><td>${invoiceCell}</td><td>${escapeHtml(p.label)}</td><td class="num money">${isStage?fmtMoney(p.auto):'—'}</td>
-      <td class="num">${input}</td><td class="num mono">${model.net>0?fmtInt(Math.ceil(p.used/model.net)):'—'}</td><td>${status.join(' ')}</td><td>${p.stock&&inv?`<span class="pill stock">+${fmtInt(totalInvoiceQty(inv))} шт.</span>`:'—'}</td><td>${actions}</td>`;
+      <td class="num">${input}</td><td class="num mono">${model.net>0?fmtInt(Math.ceil(p.used/model.net)):'—'}</td><td>${status.join(' ')}</td><td>${p.stock&&inv?linkedArrivalMarkup(inv):'—'}</td><td>${actions}</td>`;
     body.appendChild(tr);
   });
   bindStageEditors(body);
@@ -444,7 +475,13 @@ function renderSales(model){
 function formatMix(items){ return skuCatalog.filter(s=>Number(items?.[s.article]||0)>0).map(s=>`${s.article}: ${fmtInt(items[s.article])}`).join(' · ') || '—'; }
 function renderStock(model){
   const eBody=$('stockEventsBody'); eBody.innerHTML='';
-  stockEvents().forEach(e=>{ const tr=document.createElement('tr'); const hist=e.date<model.start; if(hist)tr.className='row-history'; tr.innerHTML=`<td class="mono date-cell">${fmtDate(e.date)}</td><td><div class="invoice-date">${fmtDate(parseDate(e.invoiceDate))}</div><div class="invoice-no">№${escapeHtml(e.invoiceNumber)}</div></td><td class="num mono stock-positive">+${fmtInt(e.qty)}</td><td class="stock-mix">${escapeHtml(formatMix(e.items))}</td><td>${hist?'<span class="pill history">в стартовом остатке</span>':'<span class="pill stock">будущий приход</span>'}</td>`; eBody.appendChild(tr); });
+  stockEvents().forEach(e=>{
+    const tr=document.createElement('tr'), inv=state.invoices.find(x=>x.id===e.invoiceId), hist=e.date<model.start;
+    if(hist)tr.className='row-history';
+    tr.innerHTML=`<td>${arrivalEditor(inv,e)}</td><td><div class="invoice-date">${fmtDate(parseDate(e.invoiceDate))}</div><div class="invoice-no">№${escapeHtml(e.invoiceNumber)}</div></td><td class="num mono stock-positive">+${fmtInt(e.qty)}</td><td class="stock-mix">${escapeHtml(formatMix(e.items))}</td><td>${hist?'<span class="pill history">в стартовом остатке</span>':'<span class="pill stock">будущий приход</span>'}${e.dateManualOverride?' <span class="pill manual-date">ручная дата</span>':''}</td>`;
+    eBody.appendChild(tr);
+  });
+  bindArrivalEditors(eBody);
   const sBody=$('skuStockBody'); sBody.innerHTML='';
   skuCatalog.forEach(s=>{
     let before=0,after=0; stockEvents().forEach(e=>{const q=Number(e.items?.[s.article]||0); if(e.date<=model.start)before+=q;else after+=q;});
@@ -558,7 +595,7 @@ $('invoiceForm').addEventListener('submit',e=>{
       $('invoiceFormError').textContent='Новая дата счёта конфликтует с вручную зафиксированными датами платежей. Сначала верните или измените ручные даты этапов.';
       $('invoiceDate').setAttribute('aria-invalid','true'); $('invoiceDate').focus(); return;
     }
-    Object.assign(inv,{number,date,total,items});saveState('Счёт изменён');setStatus('Счёт изменён. Его платежи, приход и будущий план продаж пересчитаны.','success');
+    const arrivalFixed=hasOwn(state.stockDateOverrides,inv.id); Object.assign(inv,{number,date,total,items});saveState('Счёт изменён');setStatus(arrivalFixed?'Счёт изменён. Платежи пересчитаны; ручная дата прихода сохранена.':'Счёт изменён. Платежи, дата прихода и будущий план продаж пересчитаны.','success');
   }
   else{state.invoices.push({id:uid(),number,date,total,items,sourceNote:'Счёт введён вручную в приложении.'});saveState('Счёт добавлен');setStatus('Счёт добавлен. Создан график платежей и приход товара.','success');}
   $('invoiceDialog').close();renderAll();
